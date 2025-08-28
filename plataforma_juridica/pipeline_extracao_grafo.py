@@ -3,8 +3,10 @@ from spacy.matcher import Matcher
 from neo4j import GraphDatabase
 import os
 import re
+import json
 from pypdf import PdfReader
 import configparser
+from api_camara_client import ApiCamaraClient
 
 # --- FUNÇÕES DE CONFIGURAÇÃO ---
 def ler_configuracoes(config_file='plataforma_juridica/config.ini'):
@@ -37,8 +39,8 @@ class Neo4jConnection:
         target_match = ", ".join([f'{k}: $target_{k}' for k in target_props])
         
         query = f"""
-        MATCH (a:{source_label} {{{source_match}}})
-        MATCH (b:{target_label} {{{target_match}}})
+        MATCH (a:{source_label} {{ {source_match} }})
+        MATCH (b:{target_label} {{ {target_match} }})
         MERGE (a)-[r:{rel_type}]->(b)
         RETURN type(r)
         """
@@ -107,12 +109,8 @@ def normalizar_entidade(rule_id, entity_text):
             return f"Art. {num}"
         
         elif rule_id == 'LEI':
-            num_match = re.search(r'(\d[\d./]*)', text)
-            if num_match:
-                num = num_match.group(1)
-                if 'decreto-lei' in text:
-                    return f"Decreto-Lei nº {num}"
-                return f"Lei nº {num}"
+            # A normalização da LEI agora é apenas para limpar o texto
+            return entity_text.strip()
         
         elif rule_id == 'SUMULA':
             num_match = re.search(r'\d+', text)
@@ -140,12 +138,13 @@ def normalizar_entidade(rule_id, entity_text):
 
     return entity_text.strip()
 
-def extrair_e_popular_grafo(nlp, neo4j_conn, document_name, document_text):
+def extrair_e_popular_grafo(nlp, neo4j_conn, camara_client, mapa_leis, document_name, document_text):
     """Função principal para extrair entidades dos textos e popular o grafo Neo4j."""
     print(f"\nIniciando extração e povoamento para o documento: {document_name}")
+    
     matcher = Matcher(nlp.vocab)
 
-    pattern_lei = [{"LOWER": {"IN": ["lei", "decreto-lei"]}}, {"LOWER": "nº"}, {"IS_DIGIT": True}, {"TEXT": "/", "OP": "?"}, {"IS_DIGIT": True, "OP": "?"}]
+    pattern_lei = [{"LOWER": {"IN": ["lei", "decreto-lei"]}}, {"LOWER": "nº"}, {"TEXT": {"REGEX": "^\\d{1,3}(\\.\\d{3})*\\/\\d{4}$"}}]
     matcher.add("LEI", [pattern_lei])
 
     pattern_artigo = [{"LOWER": {"IN": ["artigo", "art.", "art"]}}, {"IS_DIGIT": True}]
@@ -191,10 +190,52 @@ def extrair_e_popular_grafo(nlp, neo4j_conn, document_name, document_text):
         neo4j_conn.execute_query(f"MERGE (e:{entity_label} {{id: $id}})", props)
         
         neo4j_conn.create_relationship(
-            "Documento", {"nome": document_name}, 
-            entity_label, {"id": normalized_text}, 
+            "Documento", {"nome": document_name},
+            entity_label, {"id": normalized_text},
             "CITA"
         )
+
+        if rule_id == 'LEI':
+            projeto_origem = mapa_leis.get(normalized_text)
+            if projeto_origem:
+                sigla = projeto_origem['sigla']
+                numero = projeto_origem['numero']
+                ano = projeto_origem['ano']
+
+                print(f"  Buscando proposição na API da Câmara: {sigla} {numero}/{ano}")
+                proposicao = camara_client.buscar_proposicao(sigla, numero, ano)
+                
+                if proposicao and proposicao.get('id'):
+                    prop_id = proposicao['id']
+                    detalhes = camara_client.obter_detalhes_proposicao(prop_id)
+                    
+                    if detalhes:
+                        query = f"""
+                        MATCH (l:Lei {{id: $id}})
+                        SET l.ementa = $ementa, l.status = $status, l.urlInteiroTeor = $url
+                        """
+                        params = {
+                            'id': normalized_text,
+                            'ementa': detalhes.get('ementa'),
+                            'status': detalhes.get('statusProposicao', {}).get('descricaoSituacao'),
+                            'url': detalhes.get('urlInteiroTeor')
+                        }
+                        neo4j_conn.execute_query(query, params)
+                        print(f"    -> Nó :Lei enriquecido com ementa e status.")
+
+                    autores = camara_client.obter_autores_proposicao(prop_id)
+                    if autores:
+                        for autor in autores:
+                            props_autor = {'nome': autor['nome'], 'tipo': autor.get('tipo', 'Indefinido')}
+                            neo4j_conn.execute_query("MERGE (a:Autor {nome: $nome}) SET a += $props", {'nome': autor['nome'], 'props': props_autor})
+                            neo4j_conn.create_relationship(
+                                "Autor", {'nome': autor['nome']},
+                                "Lei", {'id': normalized_text},
+                                "AUTOR_DE"
+                            )
+                            print(f"    -> Relação [:AUTOR_DE] criada para o autor: {autor['nome']}")
+            else:
+                print(f"  [Aviso] Lei '{normalized_text}' não encontrada no arquivo de mapeamento.")
 
 # --- FUNÇÃO PRINCIPAL DE EXECUÇÃO ---
 def main():
@@ -206,14 +247,24 @@ def main():
         neo4j_user = config['NEO4J']['USER']
         neo4j_password = config['NEO4J']['PASSWORD']
         pdf_directory_to_process = config['PATHS']['PDF_DIRECTORY']
+        camara_api_url = config['API_CAMARA']['BASE_URL']
         
         neo4j_conn = Neo4jConnection(neo4j_uri, neo4j_user, neo4j_password)
         print("Conexão com Neo4j estabelecida.")
+        
+        camara_client = ApiCamaraClient(camara_api_url)
+        print("Cliente da API da Câmara inicializado.")
+
+        with open('plataforma_juridica/mapeamento_leis.json', 'r', encoding='utf-8') as f:
+            mapeamento_leis = json.load(f)
+        mapa_leis = {item['lei']: item['projeto_origem'] for item in mapeamento_leis}
+        print("Mapeamento de leis carregado.")
+
     except (FileNotFoundError, KeyError) as e:
-        print(f"Erro ao ler o arquivo de configuração: {e}")
+        print(f"[ERRO] Erro ao ler o arquivo de configuração ou mapeamento: {e}")
         return
     except Exception as e:
-        print(f"Falha ao conectar com o Neo4j: {e}")
+        print(f"[ERRO] Falha inesperada: {e}")
         return
 
     nlp = carregar_modelo_spacy()
@@ -225,7 +276,7 @@ def main():
         return
 
     for filename, text in processed_pdfs:
-        extrair_e_popular_grafo(nlp, neo4j_conn, filename, text)
+        extrair_e_popular_grafo(nlp, neo4j_conn, camara_client, mapa_leis, filename, text)
 
     neo4j_conn.close()
     print("\n--- Pipeline concluído ---")

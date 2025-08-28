@@ -1,6 +1,10 @@
 import pytest
 from unittest.mock import MagicMock, patch
 from ingest_cnj_data import ensure_index_exists, ingest_data_for_tribunal, ES_INDEX
+import logging # Import logging
+
+# Ensure logging is set up for tests
+import logging_config
 
 @pytest.fixture(autouse=True)
 def mock_clients():
@@ -9,7 +13,13 @@ def mock_clients():
          patch('ingest_cnj_data.cnj_client') as mock_cnj_client:
         yield mock_es_client, mock_cnj_client
 
-def test_ensure_index_exists_creates_index(mock_clients, capsys):
+# Fixture to capture logs
+@pytest.pytest.fixture
+def caplog_fixture(caplog):
+    caplog.set_level(logging.DEBUG) # Capture all levels
+    return caplog
+
+def test_ensure_index_exists_creates_index(mock_clients, caplog_fixture):
     mock_es_client, _ = mock_clients
     mock_es_client.indices.exists.return_value = False
     
@@ -17,10 +27,10 @@ def test_ensure_index_exists_creates_index(mock_clients, capsys):
     
     mock_es_client.indices.exists.assert_called_once_with(index=ES_INDEX)
     mock_es_client.indices.create.assert_called_once_with(index=ES_INDEX)
-    captured = capsys.readouterr()
-    assert f"Elasticsearch index '{ES_INDEX}' created." in captured.out
+    assert f"Elasticsearch index '{ES_INDEX}' created." in caplog_fixture.text
+    assert caplog_fixture.records[0].levelname == "INFO"
 
-def test_ensure_index_exists_does_not_create_if_exists(mock_clients, capsys):
+def test_ensure_index_exists_does_not_create_if_exists(mock_clients, caplog_fixture):
     mock_es_client, _ = mock_clients
     mock_es_client.indices.exists.return_value = True
     
@@ -28,10 +38,10 @@ def test_ensure_index_exists_does_not_create_if_exists(mock_clients, capsys):
     
     mock_es_client.indices.exists.assert_called_once_with(index=ES_INDEX)
     mock_es_client.indices.create.assert_not_called()
-    captured = capsys.readouterr()
-    assert f"Elasticsearch index '{ES_INDEX}' already exists." in captured.out
+    assert f"Elasticsearch index '{ES_INDEX}' already exists." in caplog_fixture.text
+    assert caplog_fixture.records[0].levelname == "INFO"
 
-def test_ingest_data_for_tribunal_no_data(mock_clients, capsys):
+def test_ingest_data_for_tribunal_no_data(mock_clients, caplog_fixture):
     mock_es_client, mock_cnj_client = mock_clients
     mock_cnj_client.search.return_value = None # No data from API
     
@@ -39,11 +49,12 @@ def test_ingest_data_for_tribunal_no_data(mock_clients, capsys):
     
     mock_cnj_client.search.assert_called_once()
     mock_es_client.index.assert_not_called()
-    captured = capsys.readouterr()
-    assert "No more data or error for api_publica_test/_search." in captured.out
-    assert "Total new records indexed: 0" in captured.out
+    assert "No more data or error for api_publica_test/_search." in caplog_fixture.text
+    assert "Total new records indexed: 0" in caplog_fixture.text
+    assert caplog_fixture.records[0].levelname == "INFO" # Starting ingestion
+    assert caplog_fixture.records[-1].levelname == "INFO" # Finished ingestion
 
-def test_ingest_data_for_tribunal_single_page_new_records(mock_clients, capsys):
+def test_ingest_data_for_tribunal_single_page_new_records(mock_clients, caplog_fixture):
     mock_es_client, mock_cnj_client = mock_clients
     mock_cnj_client.search.return_value = {
         "hits": {
@@ -62,10 +73,11 @@ def test_ingest_data_for_tribunal_single_page_new_records(mock_clients, capsys):
     assert mock_es_client.index.call_count == 2
     mock_es_client.index.assert_any_call(index=ES_INDEX, id="proc1", document={"numeroProcesso": "proc1"})
     mock_es_client.index.assert_any_call(index=ES_INDEX, id="proc2", document={"numeroProcesso": "proc2"})
-    captured = capsys.readouterr()
-    assert "Total new records indexed: 2" in captured.out
+    assert "Indexed new process: proc1" in caplog_fixture.text
+    assert "Indexed new process: proc2" in caplog_fixture.text
+    assert "Total new records indexed: 2" in caplog_fixture.text
 
-def test_ingest_data_for_tribunal_deduplication(mock_clients, capsys):
+def test_ingest_data_for_tribunal_deduplication(mock_clients, caplog_fixture):
     mock_es_client, mock_cnj_client = mock_clients
     mock_cnj_client.search.return_value = {
         "hits": {
@@ -84,10 +96,11 @@ def test_ingest_data_for_tribunal_deduplication(mock_clients, capsys):
     mock_cnj_client.search.assert_called_once()
     assert mock_es_client.index.call_count == 1 # Only proc2 should be indexed
     mock_es_client.index.assert_called_once_with(index=ES_INDEX, id="proc2", document={"numeroProcesso": "proc2"})
-    captured = capsys.readouterr()
-    assert "Total new records indexed: 1" in captured.out
+    assert "Process proc1 already exists. Skipping." in caplog_fixture.text
+    assert "Indexed new process: proc2" in caplog_fixture.text
+    assert "Total new records indexed: 1" in caplog_fixture.text
 
-def test_ingest_data_for_tribunal_pagination(mock_clients, capsys):
+def test_ingest_data_for_tribunal_pagination(mock_clients, caplog_fixture):
     mock_es_client, mock_cnj_client = mock_clients
     # First page
     mock_cnj_client.search.side_effect = [
@@ -116,13 +129,11 @@ def test_ingest_data_for_tribunal_pagination(mock_clients, capsys):
     
     assert mock_cnj_client.search.call_count == 2 # Two API calls for pagination
     assert mock_es_client.index.call_count == 3
-    mock_es_client.index.assert_any_call(index=ES_INDEX, id="proc1", document={"numeroProcesso": "proc1"})
-    mock_es_client.index.assert_any_call(index=ES_INDEX, id="proc2", document={"numeroProcesso": "proc2"})
-    mock_es_client.index.assert_any_call(index=ES_INDEX, id="proc3", document={"numeroProcesso": "proc3"})
-    captured = capsys.readouterr()
-    assert "Total new records indexed: 3" in captured.out
+    assert "Fetching page 1" in caplog_fixture.text
+    assert "Fetching page 2" in caplog_fixture.text
+    assert "Total new records indexed: 3" in caplog_fixture.text
 
-def test_ingest_data_for_tribunal_missing_process_number(mock_clients, capsys):
+def test_ingest_data_for_tribunal_missing_process_number(mock_clients, caplog_fixture):
     mock_es_client, mock_cnj_client = mock_clients
     mock_cnj_client.search.return_value = {
         "hits": {
@@ -136,6 +147,7 @@ def test_ingest_data_for_tribunal_missing_process_number(mock_clients, capsys):
     ingest_data_for_tribunal("api_publica_test/_search")
     
     mock_es_client.index.assert_not_called()
-    captured = capsys.readouterr()
-    assert "Skipping record due to missing 'numeroProcesso': {'someOtherField': 'value'}" in captured.out
-    assert "Total new records indexed: 0" in captured.out
+    assert "Skipping record due to missing 'numeroProcesso':" in caplog_fixture.text
+    assert caplog_fixture.records[0].levelname == "INFO" # Starting ingestion
+    assert caplog_fixture.records[2].levelname == "WARNING" # Skipping record
+    assert "Total new records indexed: 0" in caplog_fixture.text

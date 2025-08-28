@@ -3,3 +3,6 @@ elasticsearch
 pytest
 requests-mock
 neo4j
+fastapi
+uvicorn
+groq

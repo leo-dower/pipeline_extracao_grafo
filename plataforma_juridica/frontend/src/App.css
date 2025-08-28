@@ -1,0 +1,122 @@
+#root {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+}
+
+.App {
+  font-family: Arial, sans-serif;
+  color: #333;
+}
+
+.App-header {
+  margin-bottom: 2rem;
+  color: #0056b3;
+}
+
+section {
+  background-color: #f9f9f9;
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+h2 {
+  color: #0056b3;
+  margin-bottom: 1.5rem;
+}
+
+.search-controls, .filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 1rem;
+  justify-content: center;
+}
+
+input[type="text"], textarea, select {
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 1rem;
+  flex-grow: 1;
+  min-width: 200px;
+}
+
+textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+button {
+  padding: 10px 15px;
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: background-color 0.2s;
+}
+
+button:hover:not(:disabled) {
+  background-color: #0056b3;
+}
+
+button:disabled {
+  background-color: #cccccc;
+  cursor: not-allowed;
+}
+
+.search-results {
+  margin-top: 1.5rem;
+  text-align: left;
+}
+
+.process-card {
+  background-color: white;
+  border: 1px solid #eee;
+  border-radius: 6px;
+  padding: 1rem;
+  margin-bottom: 10px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.process-card h4 {
+  margin-top: 0;
+  color: #333;
+}
+
+.pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  margin-top: 1.5rem;
+}
+
+.error-message {
+  color: red;
+  font-weight: bold;
+  margin-top: 1rem;
+}
+
+.ai-analysis-section {
+  text-align: left;
+}
+
+.ai-result {
+  background-color: #e9f7ef;
+  border: 1px solid #d4edda;
+  border-radius: 6px;
+  padding: 1rem;
+  margin-top: 1.5rem;
+  color: #155724;
+}
+
+.ai-result h3 {
+  color: #155724;
+  margin-top: 0;
+}

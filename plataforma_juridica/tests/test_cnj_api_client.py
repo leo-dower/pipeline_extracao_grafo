@@ -2,12 +2,22 @@ import pytest
 import requests
 import requests_mock
 from cnj_api_client import CNJAPIClient
+import logging # Import logging
+
+# Ensure logging is set up for tests
+import logging_config
 
 @pytest.fixture
 def cnj_client():
     return CNJAPIClient()
 
-def test_search_success(cnj_client, requests_mock):
+# Fixture to capture logs
+@pytest.fixture
+def caplog_fixture(caplog):
+    caplog.set_level(logging.DEBUG) # Capture all levels
+    return caplog
+
+def test_search_success(cnj_client, requests_mock, caplog_fixture):
     mock_response = {"hits": {"hits": [{"_source": {"numeroProcesso": "123"}}]}}
     requests_mock.post(
         f"{cnj_client.BASE_URL}api_publica_tjsp/_search",
@@ -17,8 +27,10 @@ def test_search_success(cnj_client, requests_mock):
     query = {"query": {"match_all": {}}}
     response = cnj_client.search("api_publica_tjsp/_search", query)
     assert response == mock_response
+    assert "Sending request to CNJ API" in caplog_fixture.text
+    assert "Received response from CNJ API" in caplog_fixture.text
 
-def test_search_http_error(cnj_client, requests_mock, capsys):
+def test_search_http_error(cnj_client, requests_mock, caplog_fixture):
     requests_mock.post(
         f"{cnj_client.BASE_URL}api_publica_tjsp/_search",
         status_code=404,
@@ -27,10 +39,10 @@ def test_search_http_error(cnj_client, requests_mock, capsys):
     query = {"query": {"match_all": {}}}
     response = cnj_client.search("api_publica_tjsp/_search", query)
     assert response is None
-    captured = capsys.readouterr()
-    assert "HTTP error occurred: 404 Client Error: Not Found for url" in captured.out
+    assert "HTTP error occurred during CNJ API call" in caplog_fixture.text
+    assert caplog_fixture.records[0].levelname == "ERROR" # Check log level
 
-def test_search_connection_error(cnj_client, requests_mock, capsys):
+def test_search_connection_error(cnj_client, requests_mock, caplog_fixture):
     requests_mock.post(
         f"{cnj_client.BASE_URL}api_publica_tjsp/_search",
         exc=requests.exceptions.ConnectionError("Mocked connection error")
@@ -38,10 +50,10 @@ def test_search_connection_error(cnj_client, requests_mock, capsys):
     query = {"query": {"match_all": {}}}
     response = cnj_client.search("api_publica_tjsp/_search", query)
     assert response is None
-    captured = capsys.readouterr()
-    assert "Connection error occurred: Mocked connection error" in captured.out
+    assert "Connection error occurred during CNJ API call" in caplog_fixture.text
+    assert caplog_fixture.records[0].levelname == "ERROR"
 
-def test_search_timeout_error(cnj_client, requests_mock, capsys):
+def test_search_timeout_error(cnj_client, requests_mock, caplog_fixture):
     requests_mock.post(
         f"{cnj_client.BASE_URL}api_publica_tjsp/_search",
         exc=requests.exceptions.Timeout("Mocked timeout error")
@@ -49,10 +61,10 @@ def test_search_timeout_error(cnj_client, requests_mock, capsys):
     query = {"query": {"match_all": {}}}
     response = cnj_client.search("api_publica_tjsp/_search", query)
     assert response is None
-    captured = capsys.readouterr()
-    assert "Timeout error occurred: Mocked timeout error" in captured.out
+    assert "Timeout error occurred during CNJ API call" in caplog_fixture.text
+    assert caplog_fixture.records[0].levelname == "ERROR"
 
-def test_search_generic_request_error(cnj_client, requests_mock, capsys):
+def test_search_generic_request_error(cnj_client, requests_mock, caplog_fixture):
     requests_mock.post(
         f"{cnj_client.BASE_URL}api_publica_tjsp/_search",
         exc=requests.exceptions.RequestException("Mocked generic error")
@@ -60,5 +72,5 @@ def test_search_generic_request_error(cnj_client, requests_mock, capsys):
     query = {"query": {"match_all": {}}}
     response = cnj_client.search("api_publica_tjsp/_search", query)
     assert response is None
-    captured = capsys.readouterr()
-    assert "An unexpected error occurred: Mocked generic error" in captured.out
+    assert "An unexpected error occurred during CNJ API call" in caplog_fixture.text
+    assert caplog_fixture.records[0].levelname == "ERROR"

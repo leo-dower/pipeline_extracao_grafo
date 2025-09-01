@@ -136,3 +136,12 @@ plataforma_juridica/config.ini
 
 # Database files
 *.db
+
+# Ignored due to issues or being an archive
+docs/DIARIOS_MUNICIPAIS_QUERIDO_DIARIO.md
+_archive/
+docs/PLANEJAMENTO_API_DATAJUD.md
+
+# Custom ignores
+*_log.txt
+*.lnk
